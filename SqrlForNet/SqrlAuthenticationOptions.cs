@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
+using Net.Codecrete.QrCodeGenerator;
 
 namespace SqrlForNet
 {
@@ -16,11 +17,13 @@ namespace SqrlForNet
 
         public int NutExpiresInSeconds { get; set; }
 
-        public int CheckMillieSeconds { get; set; }
+        public int CheckMilliSeconds { get; set; }
 
         public string NameForAnonymous { get; set; }
 
         public string CancelledPath { get; set; }
+
+        public PathString RedirectPath { get; set; }
         
         public bool Diagnostics { get; set; }
         
@@ -28,8 +31,26 @@ namespace SqrlForNet
         
         public bool EnableHelpers { get; set; }
 
-        public string[] HelpersPaths { get; set; }
+        public PathString[] HelpersPaths { get; set; }
+        
+        public int QrCodeBorderSize { get; set; }
+        
+        public int QrCodeScale { get; set; }
+        
+        public EccLevel QrCodeErrorCorrectionLevel { get; set; }
 
+        internal QrCode.Ecc GetQrCodeErrorCorrectionLevel()
+        {
+            switch (QrCodeErrorCorrectionLevel)
+            {
+                case EccLevel.Low: return QrCode.Ecc.Low;
+                case EccLevel.Medium: return QrCode.Ecc.Medium;
+                case EccLevel.Quartile: return QrCode.Ecc.Quartile;
+                case EccLevel.High: return QrCode.Ecc.High;
+                default: throw new ArgumentOutOfRangeException();
+            }
+        }
+        
         public OtherAuthenticationPath[] OtherAuthenticationPaths { get; set; }
         
         public Func<string, HttpContext, UserLookUpResult> UserExists;
@@ -168,139 +189,116 @@ namespace SqrlForNet
             }
         }
 
-        public Action<string, bool> RemoveNut;
+        public Func<string, HttpContext, NutInfo> GetAndRemoveNut;
 
-        public Func<string, bool, Task> RemoveNutAsync;
+        public Func<string, HttpContext, Task<NutInfo>> GetAndRemoveNutAsync;
 
-        internal void RemoveNutInternal(string nut, bool authorized)
+        private KeyValuePair<string, NutInfo> _currentNutInfo;
+
+        internal NutInfo GetAndRemoveNutInternal(string nut, HttpContext context)
         {
-            if (RemoveNut != null)
+            if (_currentNutInfo.Key != nut)
             {
-                RemoveNut.Invoke(nut, authorized);
+                if (GetAndRemoveNut != null)
+                {
+                    _currentNutInfo = new KeyValuePair<string, NutInfo>(nut, GetAndRemoveNut.Invoke(nut, context));
+                }
+                else if (GetAndRemoveNutAsync != null)
+                {
+                    var task = GetAndRemoveNutAsync.Invoke(nut, context);
+                    task.Wait();
+                    _currentNutInfo = new KeyValuePair<string, NutInfo>(nut, task.Result);
+                }
+                else
+                {
+                    _currentNutInfo = new KeyValuePair<string, NutInfo>(nut, GetAndRemoveNutMethod(nut, context));
+                }
             }
-            else
-            {
-                RemoveNutAsync.Invoke(nut, authorized).Wait();
-            }
+
+            return _currentNutInfo.Value;
         }
 
-        public Func<string, bool, NutInfo> GetNut;
+        public Action<string, NutInfo, bool, HttpContext> StoreNut;
 
-        public Func<string, bool, Task<NutInfo>> GetNutAsync;
+        public Func<string, NutInfo, bool, HttpContext, Task> StoreNutAsync;
 
-        internal NutInfo GetNutInternal(string nut, bool authorized)
-        {
-            if (GetNut != null)
-            {
-                return GetNut.Invoke(nut, authorized);
-            }
-            else
-            {
-                var task = GetNutAsync.Invoke(nut, authorized);
-                task.Wait();
-                return task.Result;
-            }
-        }
-
-        public Action<string, NutInfo, bool> StoreNut;
-
-        public Func<string, NutInfo, bool, Task> StoreNutAsync;
-
-        internal void StoreNutInternal(string nut, NutInfo info, bool authorized)
+        internal void StoreNutInternal(string nut, NutInfo info, bool authorized, HttpContext context)
         {
             if (StoreNut != null)
             {
-                StoreNut.Invoke(nut, info, authorized);
+                StoreNut.Invoke(nut, info, authorized, context);
+            }
+            else if (StoreNutAsync != null)
+            {
+                StoreNutAsync.Invoke(nut, info, authorized, context).Wait();
             }
             else
             {
-                StoreNutAsync.Invoke(nut, info, authorized).Wait();
+                StoreNutMethod(nut, info, authorized, context);
             }
         }
 
-        public Func<string, bool> CheckNutAuthorized;
+        public Func<string, HttpContext, NutInfo> RemoveAuthorizedNut;
 
-        public Func<string, Task<bool>> CheckNutAuthorizedAsync;
+        public Func<string, HttpContext, Task<NutInfo>> RemoveAuthorizedNutAsync;
 
-        internal bool CheckNutAuthorizedInternal(string nut)
+        internal NutInfo RemoveAuthorizedNutInternal(string nut, HttpContext context)
         {
-            if (CheckNutAuthorized != null)
+            if (RemoveAuthorizedNut != null)
             {
-                return CheckNutAuthorized.Invoke(nut);
+                return RemoveAuthorizedNut.Invoke(nut, context);
             }
-            else
+            else if (RemoveAuthorizedNutAsync != null)
             {
-                var task = CheckNutAuthorizedAsync.Invoke(nut);
+                var task = RemoveAuthorizedNutAsync.Invoke(nut, context);
                 task.Wait();
                 return task.Result;
             }
-        }
-
-        public Func<string, string> GetNutIdk;
-
-        public Func<string, Task<string>> GetNutIdkAsync;
-
-        internal string GetNutIdkInternal(string nut)
-        {
-            if (GetNutIdk != null)
-            {
-                return GetNutIdk.Invoke(nut);
-            }
             else
             {
-                var task = GetNutIdkAsync.Invoke(nut);
-                task.Wait();
-                return task.Result;
+                return RemoveAuthorizedNutMethod(nut, context);
             }
         }
 
-        public Action<string,string> StoreCpsSessionId;
+        public Action<string, string, HttpContext> StoreCpsSessionId;
 
-        public Func<string,string, Task> StoreCpsSessionIdAsync;
+        public Func<string,string, HttpContext, Task> StoreCpsSessionIdAsync;
 
-        internal void StoreCpsSessionIdInternal(string code, string idk)
+        internal void StoreCpsSessionIdInternal(string code, string idk, HttpContext context)
         {
             if (StoreCpsSessionId != null)
             {
-                StoreCpsSessionId.Invoke(code, idk);
+                StoreCpsSessionId.Invoke(code, idk, context);
+            }
+            else if (StoreCpsSessionIdAsync != null)
+            {
+                StoreCpsSessionIdAsync.Invoke(code, idk, context).Wait();
             }
             else
             {
-                StoreCpsSessionIdAsync.Invoke(code, idk).Wait();
+                StoreCpsSessionIdMethod(code, idk, context);
             }
         }
 
-        public Func<string, string> GetUserIdByCpsSessionId;
+        public Func<string, HttpContext, string> GetUserIdAndRemoveCpsSessionId;
 
-        public Func<string, Task<string>> GetUserIdByCpsSessionIdAsync;
+        public Func<string, HttpContext, Task<string>> GetUserIdAndRemoveCpsSessionIdAsync;
 
-        internal string GetUserIdByCpsSessionIdInternal(string code)
+        internal string GetUserIdAndRemoveCpsSessionIdInternal(string code, HttpContext context)
         {
-            if (GetUserIdByCpsSessionId != null)
+            if (GetUserIdAndRemoveCpsSessionId != null)
             {
-                return GetUserIdByCpsSessionId.Invoke(code);
+                return GetUserIdAndRemoveCpsSessionId.Invoke(code, context);
             }
-            else
+            else if (GetUserIdAndRemoveCpsSessionIdAsync != null)
             {
-                var task = GetUserIdByCpsSessionIdAsync.Invoke(code);
+                var task = GetUserIdAndRemoveCpsSessionIdAsync.Invoke(code, context);
                 task.Wait();
                 return task.Result;
             }
-        }
-
-        public Action<string> RemoveCpsSessionId;
-
-        public Func<string, Task> RemoveCpsSessionIdAsync;
-
-        internal void RemoveCpsSessionIdInternal(string code)
-        {
-            if (RemoveCpsSessionId != null)
-            {
-                RemoveCpsSessionId.Invoke(code);
-            }
             else
             {
-                RemoveCpsSessionIdAsync.Invoke(code).Wait();
+                return GetUserIdAndRemoveCpsSessionIdMethod(code, context);
             }
         }
 
@@ -393,8 +391,7 @@ namespace SqrlForNet
                 return NameForAnonymous;
             }
         }
-
-
+        
         private static readonly Dictionary<string, NutInfo> NutList = new Dictionary<string, NutInfo>();
 
         private static readonly Dictionary<string, NutInfo> AuthorizedNutList = new Dictionary<string, NutInfo>();
@@ -421,24 +418,22 @@ namespace SqrlForNet
             }
         }
 
-        private NutInfo GetNutMethod(string nut, bool authorized)
+        private NutInfo GetAndRemoveNutMethod(string nut, HttpContext httpContext)
         {
             ClearOldNuts();
-            if (authorized)
-            {
-                lock (AuthorizedNutList)
-                {
-                    return AuthorizedNutList.ContainsKey(nut) ? AuthorizedNutList[nut] : null;
-                }
-            }
-
             lock (NutList)
             {
-                return NutList.ContainsKey(nut) ? NutList[nut] : null;
+                if (NutList.ContainsKey(nut))
+                {
+                    var info = NutList[nut];
+                    NutList.Remove(nut);
+                    return info;
+                }
             }
+            return null;
         }
 
-        private void StoreNutMethod(string nut, NutInfo info, bool authorized)
+        private void StoreNutMethod(string nut, NutInfo info, bool authorized, HttpContext arg4)
         {
             ClearOldNuts();
             if (authorized)
@@ -457,35 +452,22 @@ namespace SqrlForNet
             }
         }
 
-        private void RemoveNutMethod(string nut, bool authorized)
-        {
-            ClearOldNuts();
-            if (authorized)
-            {
-                lock (AuthorizedNutList)
-                {
-                    AuthorizedNutList.Remove(nut);
-                }
-            }
-            else
-            {
-                lock (NutList)
-                {
-                    NutList.Remove(nut);
-                }
-            }
-        }
-
-        private bool CheckNutAuthorizedMethod(string nut)
+        private NutInfo RemoveAuthorizedNutMethod(string nut, HttpContext httpContext)
         {
             ClearOldNuts();
             lock (AuthorizedNutList)
             {
-                return AuthorizedNutList.Any(x => x.Key == nut || x.Value.FirstNut == nut);
+                var authorizedNut = AuthorizedNutList.SingleOrDefault(x => x.Key == nut || x.Value.FirstNut == nut);
+                if (authorizedNut.Key == nut)
+                {
+                    AuthorizedNutList.Remove(authorizedNut.Key);
+                    return authorizedNut.Value;
+                }
+                return authorizedNut.Value;
             }
         }
 
-        private string GetNutIdkMethod(string nut)
+        private string GetNutIdkMethod(string nut, HttpContext httpContext)
         {
             ClearOldNuts();
             lock (AuthorizedNutList)
@@ -496,7 +478,7 @@ namespace SqrlForNet
         
         private static readonly Dictionary<string, string> CpsSessions = new Dictionary<string, string>();
         
-        private void StoreCpsSessionIdMethod(string sessionId, string userId)
+        private void StoreCpsSessionIdMethod(string sessionId, string userId, HttpContext context)
         {
             lock (CpsSessions)
             {
@@ -504,20 +486,16 @@ namespace SqrlForNet
             }
         }
 
-        private string GetUserIdByCpsSessionIdMethod(string sessionId)
+        private string GetUserIdAndRemoveCpsSessionIdMethod(string sessionId, HttpContext context)
         {
             lock (CpsSessions)
             {
-                return CpsSessions.ContainsKey(sessionId) ? CpsSessions[sessionId] : null;
+                if (CpsSessions.ContainsKey(sessionId))
+                {
+                    return CpsSessions[sessionId];
+                }
             }
-        }
-        
-        private void RemoveCpsSessionIdMethod(string sessionId)
-        {
-            lock (CpsSessions)
-            {
-                CpsSessions.Remove(sessionId);
-            }
+            return null;
         }
 
         public SqrlAuthenticationOptions()
@@ -525,24 +503,17 @@ namespace SqrlForNet
 
             CallbackPath = "/login-sqrl";
             NutExpiresInSeconds = 60;
-            CheckMillieSeconds = 1000;
+            CheckMilliSeconds = 1000;
+            QrCodeBorderSize = 1;
+            QrCodeScale = 3;
+            QrCodeErrorCorrectionLevel = EccLevel.Low;
             NameForAnonymous = "SQRL anonymous user";
             Diagnostics = false;
 
-            EncryptionKey = new byte[56];
+            EncryptionKey = new byte[8];
             RandomNumberGenerator.Create().GetBytes(EncryptionKey);
 
             Events = new RemoteAuthenticationEvents();
-
-            RemoveNut = RemoveNutMethod;
-            GetNut = GetNutMethod;
-            StoreNut = StoreNutMethod;
-            CheckNutAuthorized = CheckNutAuthorizedMethod;
-            GetNutIdk = GetNutIdkMethod;
-
-            StoreCpsSessionId = StoreCpsSessionIdMethod;
-            GetUserIdByCpsSessionId = GetUserIdByCpsSessionIdMethod;
-            RemoveCpsSessionId = RemoveCpsSessionIdMethod;
 
         }
 
@@ -558,44 +529,56 @@ namespace SqrlForNet
                 throw new ArgumentException($"{nameof(NutExpiresInSeconds)} must be grater than 0 so that a SQRL client can have a chance to communicate, we suggest a value of 60");
             }
 
-            if (!CallbackPath.HasValue || string.IsNullOrEmpty(CallbackPath))
+            if (QrCodeBorderSize < 1)
             {
-                throw new ArgumentException($"{nameof(CallbackPath)} this should have a value");
+                throw new ArgumentException($"{nameof(QrCodeBorderSize)} must be 1 or higher.");
             }
 
-            if (!CallbackPath.Value.StartsWith("/"))
+            if (QrCodeScale < 1)
             {
-                throw new ArgumentException($"{nameof(CallbackPath)} must have a '/' at the start");
+                throw new ArgumentException($"{nameof(QrCodeScale)} must be 1 or higher.");
+            }
+            
+            if (!CallbackPath.HasValue || string.IsNullOrEmpty(CallbackPath))
+            {
+                throw new ArgumentException($"The {nameof(CallbackPath)} should have a value");
             }
 
             if (OtherAuthenticationPaths != null)
             {
+                var errorList = new List<string>();
                 foreach (var otherAuthenticationPath in OtherAuthenticationPaths)
                 {
-                    if (OtherAuthenticationPaths.Count(y => y == otherAuthenticationPath) > 1)
+                    if (!otherAuthenticationPath.Path.HasValue)
                     {
-                        throw new ArgumentException($"{nameof(OtherAuthenticationPaths)} is entered more than once");
+                        throw new ArgumentException($"One of the {nameof(OtherAuthenticationPath)} needs a path defining as it currently doesn't have one");
                     }
+                    
+                    if (OtherAuthenticationPaths.Count(y => y.Path == otherAuthenticationPath.Path) > 1)
+                    {
+                        errorList.Add($"{otherAuthenticationPath.Path} is entered more than once in {nameof(OtherAuthenticationPaths)}\r\n");
+                    }
+                    
+                }
 
-                    if (!otherAuthenticationPath.Path.StartsWith("/"))
-                    {
-                        throw new ArgumentException($"{otherAuthenticationPath} in {nameof(OtherAuthenticationPaths)} must have a '/' at the start");
-                    }
+                if (errorList.Any())
+                {
+                    throw new ArgumentException(errorList.Aggregate((current, next) => current + next));
                 }
             }
 
+            if (EnableHelpers && HelpersPaths == null)
+            {
+                throw new ArgumentException($"{nameof(HelpersPaths)} must have at least one path when {nameof(EnableHelpers)} is true.");
+            }
+            
             if (HelpersPaths != null)
             {
                 foreach (var helpersPath in HelpersPaths)
                 {
-                    if (HelpersPaths.Count(y => y == helpersPath) > 1)
+                    if (HelpersPaths.Count(y => y == helpersPath.Value) > 1)
                     {
-                        throw new ArgumentException($"{nameof(HelpersPaths)} is entered more than once");
-                    }
-
-                    if (!helpersPath.StartsWith("/"))
-                    {
-                        throw new ArgumentException($"{helpersPath} in {nameof(HelpersPaths)} must have a '/' at the start");
+                        throw new ArgumentException($"{helpersPath.Value} is entered more than once in {nameof(HelpersPaths)}");
                     }
                 }
             }
@@ -673,46 +656,6 @@ namespace SqrlForNet
             if (RemoveUser != null && RemoveUserAsync != null)
             {
                 throw new ArgumentException($"{nameof(RemoveUser)} and {nameof(RemoveUserAsync)} are both defined you should only define one of them.");
-            }
-
-            if (RemoveNut != null && RemoveNutAsync != null)
-            {
-                throw new ArgumentException($"{nameof(RemoveNut)} and {nameof(RemoveNutAsync)} are both defined you should only define one of them.");
-            }
-
-            if (GetNut != null && GetNutAsync != null)
-            {
-                throw new ArgumentException($"{nameof(GetNut)} and {nameof(GetNutAsync)} are both defined you should only define one of them.");
-            }
-
-            if (StoreNut != null && StoreNutAsync != null)
-            {
-                throw new ArgumentException($"{nameof(StoreNut)} and {nameof(StoreNutAsync)} are both defined you should only define one of them.");
-            }
-
-            if (CheckNutAuthorized != null && CheckNutAuthorizedAsync != null)
-            {
-                throw new ArgumentException($"{nameof(CheckNutAuthorized)} and {nameof(CheckNutAuthorized)} are both defined you should only define one of them.");
-            }
-
-            if (GetNutIdk != null && GetNutIdkAsync != null)
-            {
-                throw new ArgumentException($"{nameof(GetNutIdk)} and {nameof(GetNutIdkAsync)} are both defined you should only define one of them.");
-            }
-
-            if (StoreCpsSessionId != null && StoreCpsSessionIdAsync != null)
-            {
-                throw new ArgumentException($"{nameof(StoreCpsSessionId)} and {nameof(StoreCpsSessionIdAsync)} are both defined you should only define one of them.");
-            }
-
-            if (GetUserIdByCpsSessionId != null && GetUserIdByCpsSessionIdAsync != null)
-            {
-                throw new ArgumentException($"{nameof(GetUserIdByCpsSessionId)} and {nameof(GetUserIdByCpsSessionIdAsync)} are both defined you should only define one of them.");
-            }
-
-            if (RemoveCpsSessionId != null && RemoveCpsSessionIdAsync != null)
-            {
-                throw new ArgumentException($"{nameof(RemoveCpsSessionId)} and {nameof(RemoveCpsSessionIdAsync)} are both defined you should only define one of them.");
             }
 
             if (SqrlOnlyReceived != null && SqrlOnlyReceivedAsync != null)

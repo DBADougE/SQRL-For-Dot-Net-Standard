@@ -31,7 +31,7 @@ namespace CustomLoginPageWithHtmlHelpers
                 })
                 .AddSqrl(options =>
                 {
-                    options.CheckMillieSeconds = 1000;
+                    options.CheckMilliSeconds = 1000;
                     options.CreateUser = SqrlCreateUser;
                     options.UserExists = UserExists;
                     options.UpdateUserId = UpdateUserId;
@@ -44,6 +44,10 @@ namespace CustomLoginPageWithHtmlHelpers
                     options.Diagnostics = true;
                     options.DisableDefaultLoginPage = true;
                     options.EnableHelpers = true;
+                    options.HelpersPaths = new[]
+                    {
+                        new PathString("/"),
+                    };
                 });
 
             services.AddMvc(options =>

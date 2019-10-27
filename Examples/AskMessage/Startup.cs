@@ -31,7 +31,7 @@ namespace AskMessageExample
                 })
                 .AddSqrl(options =>
                 {
-                    options.CheckMillieSeconds = 1000;
+                    options.CheckMilliSeconds = 1000;
                     options.CreateUser = SqrlCreateUser;
                     options.UserExists = UserExists;
                     options.UpdateUserId = UpdateUserId;
@@ -44,6 +44,11 @@ namespace AskMessageExample
                     options.Diagnostics = true;
                     options.DisableDefaultLoginPage = true;
                     options.EnableHelpers = true;
+                    options.HelpersPaths = new[]
+                    {
+                        new PathString("/"),
+                        new PathString("/MessageMe")
+                    };
                     options.OtherAuthenticationPaths = new OtherAuthenticationPath[]
                     {
                         new OtherAuthenticationPath()

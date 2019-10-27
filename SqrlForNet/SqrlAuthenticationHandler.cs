@@ -47,11 +47,9 @@ namespace SqrlForNet
             Logger.LogTrace("Started checking if request is handled");
             if (Options.EnableHelpers &&
                 (
-                    (
-                        Options.HelpersPaths != null &&
-                        Options.HelpersPaths.Any(x => Request.Path.StartsWithSegments(new PathString(x)))
-                    ) ||
-                    Options.HelpersPaths == null))
+                    Options.HelpersPaths != null &&
+                    Options.HelpersPaths.Any(x => Request.Path.StartsWithSegments(new PathString(x)))
+                ))
             {
                 Logger.LogInformation("Helpers are enabled");
                 CommandWorker.Request = Request;
@@ -122,24 +120,20 @@ namespace SqrlForNet
         private Task<HandleRequestResult> CheckRequest()
         {
             var result = CommandWorker.CheckPage();
-            if (result)
+            if (result != null)
             {
                 Logger.LogTrace("User is authorized and can be logged in");
-                var userId = Options.GetNutIdkInternal(Request.Query["check"]);
-                var username = Options.GetUsernameInternal(userId, Context);
+                var username = Options.GetUsernameInternal(result.Idk, Context);
                 var claims = new[] {
-                    new Claim(ClaimTypes.NameIdentifier, userId),
+                    new Claim(ClaimTypes.NameIdentifier, result.Idk),
                     new Claim(ClaimTypes.Name, username)
                 };
-                Logger.LogDebug("The userId is: {0}", userId);
+                Logger.LogDebug("The userId is: {0}", result.Idk);
                 Logger.LogDebug("The username is: {0}", username);
-                Options.RemoveNutInternal(Request.Query["check"], true);
 
                 var identity = new ClaimsIdentity(claims, Scheme.Name);
                 var principal = new ClaimsPrincipal(identity);
                 var ticket = new AuthenticationTicket(principal, Scheme.Name);
-
-                Options.Events.TicketReceived(new TicketReceivedContext(Context, Scheme, Options, ticket));
 
                 return Task.FromResult(HandleRequestResult.Success(ticket));
             }
@@ -148,7 +142,7 @@ namespace SqrlForNet
 
         private Task<HandleRequestResult> CheckCpsRequest()
         {
-            var result = Options.GetUserIdByCpsSessionIdInternal(Request.Query["cps"]);
+            var result = Options.GetUserIdAndRemoveCpsSessionIdInternal(Request.Query["cps"], Context);
             if (!string.IsNullOrEmpty(result))
             {
                 var username = Options.GetUsernameInternal(result, Context);
@@ -157,8 +151,6 @@ namespace SqrlForNet
                     new Claim(ClaimTypes.NameIdentifier, result),
                     new Claim(ClaimTypes.Name, username)
                 };
-
-                Options.RemoveCpsSessionIdInternal(Request.Query["cps"]);
 
                 var identity = new ClaimsIdentity(claims, Scheme.Name);
                 var principal = new ClaimsPrincipal(identity);

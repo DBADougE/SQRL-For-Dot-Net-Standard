@@ -4,7 +4,6 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Text;
-using Elskom.Generic.Libs;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Logging;
@@ -113,7 +112,6 @@ namespace SqrlForNet
                 BadCommand();
             }
             _logger.LogTrace("Removing NUT: {0}", Request.Query["nut"]);
-            Options.RemoveNutInternal(Request.Query["nut"], false);
         }
 
         private bool IsValidNutRequest()
@@ -180,7 +178,7 @@ namespace SqrlForNet
         {
             _logger.LogTrace("Getting status of NUT");
             var nut = Request.Query["nut"];
-            var nutInfo = Options.GetNutInternal(nut, false);
+            var nutInfo = Options.GetAndRemoveNutInternal(nut, Request.HttpContext);
 
             if (nutInfo == null)
             {
@@ -368,7 +366,7 @@ namespace SqrlForNet
             var opts = ParseOpts();
             if (!opts[OptKey.cps])
             {
-                var nutInfo = Options.GetNutInternal(nut, false);
+                var nutInfo = Options.GetAndRemoveNutInternal(nut, Request.HttpContext);
                 var authNutInfo = new NutInfo
                 {
                     FirstNut = nutInfo.FirstNut,
@@ -376,7 +374,7 @@ namespace SqrlForNet
                     IpAddress = nutInfo.IpAddress,
                     Idk = nutInfo.Idk
                 };
-                Options.StoreNutInternal(nut, authNutInfo, true);
+                Options.StoreNutInternal(nut, authNutInfo, true, Request.HttpContext);
                 return true;
             }
             return false;
@@ -622,7 +620,7 @@ namespace SqrlForNet
             responseMessage.AppendLine("}");
             responseMessage.AppendLine("</script>");
             responseMessage.AppendLine("</head>");
-            responseMessage.AppendLine("<body onload=\"setInterval(function(){ CheckAuto(); }, " + Options.CheckMillieSeconds + ");\">");
+            responseMessage.AppendLine("<body onload=\"setInterval(function(){ CheckAuto(); }, " + Options.CheckMilliSeconds + ");\">");
             responseMessage.AppendLine("<h1>SQRL login page</h1>");
             responseMessage.AppendLine("<img src=\"data:image/bmp;base64," + GetBase64QrCode(url) + "\">");
             responseMessage.AppendLine($"<a href=\"{url}&can={cancelUrl}\" onclick=\"CpsProcess(this);\">Sign in with SQRL</a>");
@@ -643,13 +641,15 @@ namespace SqrlForNet
             StoreNut(nut);
             var url = $"sqrl://{Request.Host}{Options.CallbackPath}?nut=" + nut;
             var checkUrl = $"{Request.Scheme}://{Request.Host}{Options.CallbackPath}?check=" + nut;
+            var redirectUrl = $"{Request.Scheme}://{Request.Host}{Options.RedirectPath}";
             var cancelUrl = Base64UrlTextEncoder.Encode(Encoding.ASCII.GetBytes($"{Request.Scheme}://{Request.Host}{Options.CancelledPath}"));
             var responseMessage = new StringBuilder();
             responseMessage.Append("{");
             responseMessage.Append("\"url\":\"" + url + "\",");
             responseMessage.Append("\"checkUrl\":\"" + checkUrl + "\",");
             responseMessage.Append("\"cancelUrl\":\"" + cancelUrl + "\",");
-            responseMessage.Append("\"qrCodeBase64\":\"" + GetBase64QrCode(url) + "\"");
+            responseMessage.Append("\"qrCodeBase64\":\"" + GetBase64QrCode(url) + "\",");
+            responseMessage.Append("\"redirectUrl\":\"" + redirectUrl + "\"");
 
             if (Options.OtherAuthenticationPaths != null && Options.OtherAuthenticationPaths.Any())
             {
@@ -657,16 +657,18 @@ namespace SqrlForNet
 
                 foreach (var optionsOtherAuthenticationPath in Options.OtherAuthenticationPaths)
                 {
-                    var xParam = optionsOtherAuthenticationPath.AuthenticateSeparately ? "x=" + (optionsOtherAuthenticationPath.Path.Length) + "&" : string.Empty;
+                    var xParam = optionsOtherAuthenticationPath.AuthenticateSeparately ? "x=" + (optionsOtherAuthenticationPath.Path.Value.Length) + "&" : string.Empty;
                     var otherUrl = $"sqrl://{Request.Host}{optionsOtherAuthenticationPath.Path}?{xParam}nut={nut}";
                     var otherCheckUrl = $"{Request.Scheme}://{Request.Host}{optionsOtherAuthenticationPath.Path}?check=" + nut;
+                    var otherRedirectUrl = $"{Request.Scheme}://{Request.Host}{optionsOtherAuthenticationPath.RedirectToPath}";
                     var otherCancelUrl = Base64UrlTextEncoder.Encode(Encoding.ASCII.GetBytes($"{Request.Scheme}://{Request.Host}{optionsOtherAuthenticationPath.Path}"));
 
                     responseMessage.Append("{");
                     responseMessage.Append("\"url\":\"" + otherUrl + "\",");
                     responseMessage.Append("\"checkUrl\":\"" + otherCheckUrl + "\",");
                     responseMessage.Append("\"cancelUrl\":\"" + otherCancelUrl + "\",");
-                    responseMessage.Append("\"qrCodeBase64\":\"" + GetBase64QrCode(otherUrl) + "\"");
+                    responseMessage.Append("\"qrCodeBase64\":\"" + GetBase64QrCode(otherUrl) + "\",");
+                    responseMessage.Append("\"redirectUrl\":\"" + otherRedirectUrl + "\"");
                     responseMessage.Append("}");
                 }
 
@@ -689,17 +691,20 @@ namespace SqrlForNet
             var url = $"sqrl://{Request.Host}{Options.CallbackPath}?nut=" + nut;
             var qrCode = GetBase64QrCode(url);
             var checkUrl = $"{Request.Scheme}://{Request.Host}{Options.CallbackPath}?check=" + nut;
+            var redirectUrl = $"{Request.Scheme}://{Request.Host}{Options.RedirectPath}";
             
             _logger.LogTrace("Adding values to cache");
             _logger.LogDebug("The CallbackUrl is: {0}", url);
-            _logger.LogDebug("The CheckMillieSeconds is: {0}", Options.CheckMillieSeconds);
+            _logger.LogDebug("The CheckMilliSeconds is: {0}", Options.CheckMilliSeconds);
             _logger.LogDebug("The CheckUrl is: {0}", checkUrl);
+            _logger.LogDebug("The RedirectUrl is: {0}", redirectUrl);
            
 
             Request.HttpContext.Items.Add("CallbackUrl", url);
             Request.HttpContext.Items.Add("QrData", qrCode);
-            Request.HttpContext.Items.Add("CheckMillieSeconds", Options.CheckMillieSeconds);
+            Request.HttpContext.Items.Add("CheckMilliSeconds", Options.CheckMilliSeconds);
             Request.HttpContext.Items.Add("CheckUrl", checkUrl);
+            Request.HttpContext.Items.Add("RedirectUrl", redirectUrl);
             if (Options.OtherAuthenticationPaths != null && Options.OtherAuthenticationPaths.Any())
             {
                 _logger.LogTrace("There are {0}", nameof(Options.OtherAuthenticationPaths));
@@ -709,16 +714,19 @@ namespace SqrlForNet
                     _logger.LogDebug("OtherAuthenticationPath: {0}", optionsOtherAuthenticationPath.Path);
                     _logger.LogDebug("OtherAuthenticationPath is authenticate separately: {0}", optionsOtherAuthenticationPath.AuthenticateSeparately);
                     
-                    var xParam = optionsOtherAuthenticationPath.AuthenticateSeparately ? "x=" + (optionsOtherAuthenticationPath.Path.Length) + "&" : string.Empty;
+                    var xParam = optionsOtherAuthenticationPath.AuthenticateSeparately ? "x=" + (optionsOtherAuthenticationPath.Path.Value.Length) + "&" : string.Empty;
                     var otherUrl = $"sqrl://{Request.Host}{optionsOtherAuthenticationPath.Path}?{xParam}nut={nut}";
                     var otherCheckUrl = $"{Request.Scheme}://{Request.Host}{optionsOtherAuthenticationPath.Path}?check=" + nut;
+                    var otherRedirectUrl = $"{Request.Scheme}://{Request.Host}{optionsOtherAuthenticationPath.RedirectToPath}";
 
                     _logger.LogDebug("The CallbackUrl is: {0}", otherUrl);
                     _logger.LogDebug("The CheckUrl is: {0}", otherCheckUrl);
+                    _logger.LogDebug("The RedirectUrl is: {0}", otherRedirectUrl);
 
                     otherUrls.Add(new OtherUrlsData()
                     {
                         Path = optionsOtherAuthenticationPath.Path,
+                        RedirectUrl = otherRedirectUrl,
                         Url = otherUrl,
                         CheckUrl = otherCheckUrl,
                         QrCodeBase64 = GetBase64QrCode(otherUrl)
@@ -736,19 +744,19 @@ namespace SqrlForNet
 
         private byte[] GetBase64QrCodeData(string url)
         {
-            var qrCode = QrCode.EncodeText(url, QrCode.Ecc.High);
-            var img = qrCode.ToBitmap(3, 1);
+            var qrCode = QrCode.EncodeText(url, Options.GetQrCodeErrorCorrectionLevel());
+            var img = qrCode.ToBitmap(Options.QrCodeScale, Options.QrCodeBorderSize);
             MemoryStream stream = new MemoryStream();
             img.Save(stream, ImageFormat.Bmp);
             return stream.ToArray();
         }
         
-        public bool CheckPage()
+        public NutInfo CheckPage()
         {
             var checkNut = Request.Query["check"];
 
-            var isAuthorized = Options.CheckNutAuthorizedInternal(checkNut);
-            if (!isAuthorized)
+            var removedNutInfo = Options.RemoveAuthorizedNutInternal(checkNut, Request.HttpContext);
+            if (removedNutInfo == null)
             {
                 var responseMessage = new StringBuilder();
                 responseMessage.Append("false");
@@ -758,7 +766,7 @@ namespace SqrlForNet
                 Response.ContentLength = responseMessageBytes.LongLength;
                 Response.Body.WriteAsync(responseMessageBytes, 0, responseMessageBytes.Length);
             }
-            return isAuthorized;
+            return removedNutInfo;
         }
 
         private void SendResponse(Tif tifValue, bool includeCpsUrl = false)
@@ -817,7 +825,7 @@ namespace SqrlForNet
             _logger.LogTrace("Storing NUT");
 
             _logger.LogDebug("The NUT been stored is: {0}", nut);
-            Options.StoreNutInternal(nut, NewNutInfo(), false);
+            Options.StoreNutInternal(nut, NewNutInfo(), false, Request.HttpContext);
 
             _logger.LogTrace("NUT stored");
         }
@@ -827,7 +835,7 @@ namespace SqrlForNet
             NutInfo currentNut = null;
             if (Request.Query.ContainsKey("nut"))
             {
-                currentNut = Options.GetNutInternal(Request.Query["nut"], false);
+                currentNut = Options.GetAndRemoveNutInternal(Request.Query["nut"], Request.HttpContext);
             }
             return new NutInfo
             {
@@ -889,7 +897,17 @@ namespace SqrlForNet
         {
             if (_optionsCache == null)
             {
-                var options = GetClientParams()["opt"].Split('~');
+                var clientParams = GetClientParams();
+                string[] options;
+                if (clientParams.ContainsKey("opt"))
+                {
+                    options = clientParams["opt"].Split('~');
+                }
+                else
+                {
+                    options = new string[0];
+                }
+
                 _optionsCache = Enum.GetNames(typeof(OptKey))
                     .ToDictionary(
                         supportedOption =>
@@ -903,29 +921,23 @@ namespace SqrlForNet
         private string GenerateNut(byte[] key)
         {
             _logger.LogTrace("Generating a NUT");
-            var now = DateTime.UtcNow;
-            var counter = now.Day.ToString("00") + now.Month.ToString("00") + now.Year.ToString() + now.Ticks.ToString();//This is always be unique as day month and year will always go up and ticks will be unique on the day
-            _logger.LogDebug("Counter is currently {0}", counter);
-            var blowFish = new BlowFish(key);
-
-            var cipherText = blowFish.EncryptCBC(counter.ToString());
-            return Base64UrlTextEncoder.Encode(Encoding.ASCII.GetBytes(cipherText));
+            return Base64UrlTextEncoder.Encode(Encoding.ASCII.GetBytes(Guid.NewGuid().ToString("N")));
         }
-
+        
         public string GenerateCpsCode()
         {
             var code = Guid.NewGuid().ToString("N");
-            Options.StoreCpsSessionIdInternal(code, GetClientParams()["idk"]);
+            Options.StoreCpsSessionIdInternal(code, GetClientParams()["idk"], Request.HttpContext);
             return code;
         }
 
         private void NoneQueryOptionHandling()
         {
-            if (GetClientParams().ContainsKey("opt") && ParseOpts()[OptKey.sqrlonly] && (Options.SqrlOnlyReceived != null || Options.SqrlOnlyReceivedAsync != null))
+            if (ParseOpts()[OptKey.sqrlonly] && (Options.SqrlOnlyReceived != null || Options.SqrlOnlyReceivedAsync != null))
             {
                 Options.SqrlOnlyReceivedInternal(GetClientParams()["idk"], Request.HttpContext);
             }
-            if (GetClientParams().ContainsKey("opt") && ParseOpts()[OptKey.hardlock] && (Options.HardlockReceived != null || Options.HardlockReceivedAsync != null))
+            if (ParseOpts()[OptKey.hardlock] && (Options.HardlockReceived != null || Options.HardlockReceivedAsync != null))
             {
                 Options.HardlockReceivedInternal(GetClientParams()["idk"], Request.HttpContext);
             }

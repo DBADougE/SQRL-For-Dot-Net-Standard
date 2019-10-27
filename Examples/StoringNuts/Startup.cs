@@ -29,7 +29,7 @@ namespace StoringNuts
                 })
                 .AddSqrl(options =>
                 {
-                    options.CheckMillieSeconds = 1000;
+                    options.CheckMilliSeconds = 1000;
                     options.CreateUser = SqrlCreateUser;
                     options.UserExists = UserExists;
                     options.UpdateUserId = UpdateUserId;
@@ -44,15 +44,11 @@ namespace StoringNuts
 
                     //These are used to manage nuts
                     options.StoreNut = StoreNut;
-                    options.GetNut = GetNut;
-                    options.RemoveNut = RemoveNut;
-                    options.GetNutIdk = GetNutIdk;
-                    options.CheckNutAuthorized = CheckNutAuthorized;
+                    options.GetAndRemoveNut = GetAndRemoveNut;
+                    options.RemoveAuthorizedNut = RemoveAuthorizedNut;
 
                     options.StoreCpsSessionId = StoreCpsSessionId;
-                    options.GetUserIdByCpsSessionId = GetUserIdByCpsSessionId;
-                    options.RemoveCpsSessionId = RemoveCpsSessionId;
-
+                    options.GetUserIdAndRemoveCpsSessionId = GetUserIdAndRemoveCpsSessionId;
                 });
 
             services.AddMvc();
@@ -158,16 +154,18 @@ namespace StoringNuts
         /// </summary>
         private static readonly Dictionary<string, NutInfo> AuthorizedNutList = new Dictionary<string, NutInfo>();
 
-        private NutInfo GetNut(string nut, bool authorized)
+        private NutInfo GetAndRemoveNut(string nut, HttpContext httpContext)
         {
-            if (authorized)
+            if (NutList.ContainsKey(nut))
             {
-                return AuthorizedNutList.ContainsKey(nut) ? AuthorizedNutList[nut] : null;
+                var info = NutList[nut];
+                NutList.Remove(nut);
+                return info;
             }
-            return NutList.ContainsKey(nut) ? NutList[nut] : null;
+            return null;
         }
 
-        private void StoreNut(string nut, NutInfo info, bool authorized)
+        private void StoreNut(string nut, NutInfo info, bool authorized, HttpContext arg4)
         {
             if (authorized)
             {
@@ -179,24 +177,18 @@ namespace StoringNuts
             }
         }
 
-        private void RemoveNut(string nut, bool authorized)
+        private NutInfo RemoveAuthorizedNut(string nut, HttpContext httpContext)
         {
-            if (authorized)
+            var authorizedNut = AuthorizedNutList.SingleOrDefault(x => x.Key == nut || x.Value.FirstNut == nut);
+            if (authorizedNut.Key == nut)
             {
                 AuthorizedNutList.Remove(nut);
+                return authorizedNut.Value;
             }
-            else
-            {
-                NutList.Remove(nut);
-            }
+            return authorizedNut.Value;
         }
 
-        private bool CheckNutAuthorized(string nut)
-        {
-            return AuthorizedNutList.Any(x => x.Key == nut || x.Value.FirstNut == nut);
-        }
-
-        private string GetNutIdk(string nut)
+        private string GetNutIdk(string nut, HttpContext httpContext)
         {
             return AuthorizedNutList.Single(x => x.Key == nut || x.Value.FirstNut == nut).Value.Idk;
         }
@@ -204,21 +196,21 @@ namespace StoringNuts
 
         private static readonly Dictionary<string, string> CpsSessions = new Dictionary<string, string>();
 
-        private void StoreCpsSessionId(string sessionId, string userId)
+        private void StoreCpsSessionId(string sessionId, string userId, HttpContext arg3)
         {
             CpsSessions.Add(sessionId, userId);
         }
 
-        private string GetUserIdByCpsSessionId(string sessionId)
+        private string GetUserIdAndRemoveCpsSessionId(string sessionId, HttpContext httpContext)
         {
-            return CpsSessions.ContainsKey(sessionId) ? CpsSessions[sessionId] : null;
+            if (CpsSessions.ContainsKey(sessionId))
+            {
+                var userId = CpsSessions[sessionId];
+                CpsSessions.Remove(userId);
+                return userId;
+            }
+
+            return null;
         }
-
-        private void RemoveCpsSessionId(string sessionId)
-        {
-            CpsSessions.Remove(sessionId);
-        }
-
-
     }
 }
